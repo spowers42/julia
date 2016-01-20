@@ -43,6 +43,7 @@ branches:
   only:
     - master
     - /release-.*/
+    - yyc/tests/mt
 notifications:
     email: false
     irc:
