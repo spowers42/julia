@@ -1,0 +1,54 @@
+diff -pru llvm-3.7.1.src/include/llvm/MC/MCWinCOFFObjectWriter.h llvm-3.7.1/include/llvm/MC/MCWinCOFFObjectWriter.h
+--- llvm-3.7.1.src/include/llvm/MC/MCWinCOFFObjectWriter.h	2015-06-23 05:49:53.000000000 -0400
++++ llvm-3.7.1/include/llvm/MC/MCWinCOFFObjectWriter.h	2016-02-10 16:43:05.717412100 -0500
+@@ -31,6 +31,7 @@ class raw_pwrite_stream;
+     unsigned getMachine() const { return Machine; }
+     virtual unsigned getRelocType(const MCValue &Target, const MCFixup &Fixup,
+                                   bool IsCrossSection,
++                                  bool IsPCRel,
+                                   const MCAsmBackend &MAB) const = 0;
+     virtual bool recordRelocation(const MCFixup &) const { return true; }
+   };
+diff -pru llvm-3.7.1.src/lib/MC/WinCOFFObjectWriter.cpp llvm-3.7.1/lib/MC/WinCOFFObjectWriter.cpp
+--- llvm-3.7.1.src/lib/MC/WinCOFFObjectWriter.cpp	2015-06-23 05:49:53.000000000 -0400
++++ llvm-3.7.1/lib/MC/WinCOFFObjectWriter.cpp	2016-02-10 16:44:28.592762200 -0500
+@@ -776,7 +776,7 @@ void WinCOFFObjectWriter::recordRelocati
+ 
+   Reloc.Data.VirtualAddress += Fixup.getOffset();
+   Reloc.Data.Type = TargetObjectWriter->getRelocType(
+-      Target, Fixup, CrossSection, Asm.getBackend());
++      Target, Fixup, CrossSection, IsPCRel, Asm.getBackend());
+ 
+   // FIXME: Can anyone explain what this does other than adjust for the size
+   // of the offset?
+diff -pru llvm-3.7.1.src/lib/Target/X86/MCTargetDesc/X86WinCOFFObjectWriter.cpp llvm-3.7.1/lib/Target/X86/MCTargetDesc/X86WinCOFFObjectWriter.cpp
+--- llvm-3.7.1.src/lib/Target/X86/MCTargetDesc/X86WinCOFFObjectWriter.cpp	2015-06-23 05:49:53.000000000 -0400
++++ llvm-3.7.1/lib/Target/X86/MCTargetDesc/X86WinCOFFObjectWriter.cpp	2016-02-10 16:43:48.593885400 -0500
+@@ -29,6 +29,7 @@ namespace {
+ 
+     unsigned getRelocType(const MCValue &Target, const MCFixup &Fixup,
+                           bool IsCrossSection,
++                          bool IsPCRel,
+                           const MCAsmBackend &MAB) const override;
+   };
+ }
+@@ -42,6 +43,7 @@ X86WinCOFFObjectWriter::~X86WinCOFFObjec
+ unsigned X86WinCOFFObjectWriter::getRelocType(const MCValue &Target,
+                                               const MCFixup &Fixup,
+                                               bool IsCrossSection,
++                                              bool IsPCRel,
+                                               const MCAsmBackend &MAB) const {
+   unsigned FixupKind = IsCrossSection ? FK_PCRel_4 : Fixup.getKind();
+ 
+@@ -55,6 +57,11 @@ unsigned X86WinCOFFObjectWriter::getRelo
+     case X86::reloc_riprel_4byte_movq_load:
+       return COFF::IMAGE_REL_AMD64_REL32;
+     case FK_Data_4:
++      if (IsPCRel)
++        return COFF::IMAGE_REL_AMD64_REL32;
++      if (Modifier == MCSymbolRefExpr::VK_COFF_IMGREL32)
++        return COFF::IMAGE_REL_AMD64_ADDR32NB;
++      return COFF::IMAGE_REL_AMD64_SECREL;
+     case X86::reloc_signed_4byte:
+       if (Modifier == MCSymbolRefExpr::VK_COFF_IMGREL32)
+         return COFF::IMAGE_REL_AMD64_ADDR32NB;

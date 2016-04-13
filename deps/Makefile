@@ -720,6 +720,7 @@ $(eval $(call LLVM_PATCH,llvm-3.7.1_2))
 $(eval $(call LLVM_PATCH,llvm-3.7.1_3))
 $(eval $(call LLVM_PATCH,llvm-D14260))
 $(LLVM_SRC_DIR)/llvm-3.7.1_2.patch-applied: $(LLVM_SRC_DIR)/llvm-3.7.1.patch-applied
+$(eval $(call LLVM_PATCH,llvm-win64-reloc-dwarf))
 else ifeq ($(LLVM_VER),3.8.0)
 $(eval $(call LLVM_PATCH,llvm-3.7.1_3))
 $(eval $(call LLVM_PATCH,llvm-D14260))
@@ -728,6 +729,7 @@ $(eval $(call LLVM_PATCH,llvm-3.8.0_winshlib))
 $(eval $(call LLVM_PATCH,llvm-3.8.0_threads))
 # fix replutil test on unix
 $(eval $(call LLVM_PATCH,llvm-D17165-D18583))
+$(eval $(call LLVM_PATCH,llvm-win64-reloc-dwarf))
 endif # LLVM_VER
 
 ifeq ($(LLVM_VER),3.7.1)
