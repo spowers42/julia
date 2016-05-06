@@ -324,8 +324,8 @@ function ctranspose(A::AbstractMatrix)
 end
 ctranspose{T<:Real}(A::AbstractVecOrMat{T}) = transpose(A)
 
-transpose(x::AbstractVector) = [ transpose(v) for i=1, v in x ]
-ctranspose{T}(x::AbstractVector{T}) = T[ ctranspose(v) for i=1, v in x ] #Fixme comprehension
+transpose(x::AbstractVector) = [ transpose(v) for i=1:1, v in x ]
+ctranspose{T}(x::AbstractVector{T}) = T[ ctranspose(v) for i=1:1, v in x ] #Fixme comprehension
 
 _cumsum_type{T<:Number}(v::AbstractArray{T}) = typeof(+zero(T))
 _cumsum_type(v) = typeof(v[1]+v[1])
