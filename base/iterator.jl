@@ -440,7 +440,6 @@ immutable IteratorND{I,N}
         end
         new{I,N}(iter, shape)
     end
-    (::Type{IteratorND}){I<:AbstractProdIterator}(p::I) = IteratorND(p, size(p))
 end
 
 start(i::IteratorND) = start(i.iter)

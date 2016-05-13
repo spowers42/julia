@@ -359,7 +359,10 @@ end
 @test Base.iteratoreltype(Base.product(take(1:2, 2)))               == Base.HasEltype()
 @test Base.iteratoreltype(Base.product([1 2; 3 4]))                 == Base.HasEltype()
 
-
+@test collect(Base.product(1:2,3:4)) == [(1,3) (1,4); (2,3) (2,4)]
+@test isempty(collect(Base.product(1:0,1:2)))
+@test length(Base.product(1:2,1:10,4:6)) == 60
+@test Base.iteratorsize(Base.product(1:2, countfrom(1))) == Base.IsInfinite()
 
 # flatten
 # -------

@@ -17,9 +17,10 @@ Generator(f, c1, c...) = Generator(a->f(a...), zip(c1, c...))
 
 Generator{T,I}(::Type{T}, iter::I) = Generator{I,Type{T}}(T, iter)
 
-start(g::Generator) = start(g.iter)
-done(g::Generator, s) = done(g.iter, s)
+start(g::Generator) = (@_inline_meta; start(g.iter))
+done(g::Generator, s) = (@_inline_meta; done(g.iter, s))
 function next(g::Generator, s)
+    @_inline_meta
     v, s2 = next(g.iter, s)
     g.f(v), s2
 end
