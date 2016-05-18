@@ -290,7 +290,7 @@ typedef struct {
     jl_value_t *primary;
     jl_svec_t *cache;        // sorted array
     jl_svec_t *linearcache;  // unsorted array
-    intptr_t uid;
+    uint32_t uid;
     struct _jl_methtable_t *mt;
 } jl_typename_t;
 
@@ -410,8 +410,11 @@ typedef struct _jl_typemap_entry_t {
 // indexed by key if it is a sublevel in an array
 typedef struct _jl_typemap_level_t {
     JL_DATA_TYPE
-    jl_array_t *arg1; // Array{union jl_typemap_t}
-    jl_array_t *targ; // Array{union jl_typemap_t}
+    jl_array_t *targ; // Array{union jl_typemap_t} :: contains Type{LeafType}
+    jl_array_t *arg1; // Array{union jl_typemap_t} :: contains LeafType
+    jl_typemap_entry_t *linear_leaf; // union jl_typemap_t (but no more levels) for types more-specific than a TypeName
+    jl_array_t *tname; // Array{union jl_typemap_t} :: contains non-abstract Type{TypeName}
+    jl_array_t *name1; // Array{union jl_typemap_t} :: contains non-abstract TypeName
     jl_typemap_entry_t *linear; // union jl_typemap_t (but no more levels)
     union jl_typemap_t any; // type at offs is Any
     jl_value_t *key; // [nullable]
