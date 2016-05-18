@@ -27,30 +27,37 @@ static int jl_is_any(jl_value_t *t1)
 
 // the goal here is to compute if sig is more-specific
 // than something we can put into the TypeName-based hash tables
-static int jl_args_morespecific_typename(jl_value_t *t1)
+// returns: 0 -> less specific, 1 -> more specific, 2 -> indeterminate (both)
+static int jl_args_morespecific_typename(jl_value_t *t1, int covariant)
 {
     if (jl_is_typector(t1))
         t1 = (jl_value_t*)((jl_typector_t*)t1)->body;
-    if (jl_is_uniontype(t1)) {
+    if (covariant && jl_is_uniontype(t1)) {
         jl_uniontype_t *ut = (jl_uniontype_t*)t1;
         size_t i, l = jl_svec_len(ut->types);
-        for (i = 0; i < l; i++) {
-            if (jl_args_morespecific_typename(jl_svecref(ut->types, i)))
-                return 1;
+        if (l == 0)
+            return 0;
+        int morespec = jl_args_morespecific_typename(jl_svecref(ut->types, 0), 0);
+        for (i = 1; i < l; i++) {
+            if (morespec != jl_args_morespecific_typename(jl_svecref(ut->types, i), 0))
+                return 2;
         }
-        return 0;
+        return morespec;
+    }
+    else if (jl_is_vararg_type(t1)) {
+        return covariant ? jl_args_morespecific_typename(jl_tparam0(t1), covariant) : 0;
     }
     else if (jl_is_typevar(t1)) {
-        return jl_args_morespecific_typename(((jl_tvar_t*)t1)->ub);
+        return jl_args_morespecific_typename(((jl_tvar_t*)t1)->ub, 1);
     }
     else if (jl_is_tuple(t1)) {
-        return 0;
+        return 0; // tuples aren't considered eligible for the TypeName level
     }
     else if (jl_is_type_type(t1)) {
-        return jl_args_morespecific_typename(jl_tparam0(t1));
+        return jl_args_morespecific_typename(jl_tparam0(t1), 0);
     }
     else if (jl_is_datatype(t1)) {
-        return !((jl_datatype_t*)t1)->abstract && !is_kind(t1);
+        return !((jl_datatype_t*)t1)->abstract && !is_kind(t1) ? 1 : 0;
     }
     return 0;
 }
@@ -71,6 +78,69 @@ static jl_value_t* jl_type_extract_name(jl_value_t *t1)
             return (jl_value_t*)dt->name;
     }
     return NULL;
+}
+
+// note: this is carefully matched to jl_args_morespecific_typename
+// to ensure that it won't be asked to split something any more
+// complicated than it knows how to handle
+static jl_value_t *jl_arg_split_spec(jl_value_t *t1, int morespec, int covariant)
+{
+    if (jl_is_typector(t1))
+        t1 = (jl_value_t*)((jl_typector_t*)t1)->body;
+    if (covariant && jl_is_uniontype(t1)) {
+        jl_uniontype_t *ut = (jl_uniontype_t*)t1;
+        size_t i, l = jl_svec_len(ut->types);
+        size_t n = 0;
+        for (i = 0; i < l; i++) {
+            jl_value_t *elem = jl_svecref(ut->types, i);
+            int elem_morespec = jl_args_morespecific_typename(elem, covariant);
+            if (elem_morespec == 2 || ((elem_morespec != 0) == (morespec != 0)))
+                n++;
+        }
+        jl_svec_t *u = jl_alloc_svec(n);
+        JL_GC_PUSH1(&u);
+        n = 0;
+        for (i = 0; i < l; i++) {
+            jl_value_t *elem = jl_svecref(ut->types, i);
+            int elem_morespec = jl_args_morespecific_typename(elem, covariant);
+            if (elem_morespec == 2)
+                elem = jl_arg_split_spec(jl_svecref(ut->types, i), morespec, 0);
+            else if ((elem_morespec != 0) != (morespec != 0))
+                continue;
+            jl_svecset(u, n++, elem);
+        }
+        jl_value_t *uu = jl_type_union(u);
+        JL_GC_POP();
+        return uu;
+    }
+    else if (jl_is_vararg_type(t1)) {
+        if (!covariant)
+            return t1;
+        jl_value_t *p = jl_arg_split_spec(jl_tparam0(t1), morespec, covariant);
+        JL_GC_PUSH1(&p);
+        assert(p != jl_tparam0(t1));
+        p = (jl_value_t*)jl_wrap_vararg(p, jl_tparam1(t1));
+        JL_GC_POP();
+        return p;
+    }
+    else if (jl_is_typevar(t1)) {
+        jl_tvar_t *tv = (jl_tvar_t*)t1;
+        jl_value_t *tv2 = jl_arg_split_spec(tv->ub, morespec, 1);
+        JL_GC_PUSH1(&tv2);
+        assert(tv2 != tv->ub);
+        tv = jl_new_typevar(tv->name, tv->lb, tv2);
+        JL_GC_POP();
+        return (jl_value_t*)tv;
+    }
+    else if (jl_is_type_type(t1)) {
+        jl_value_t *p = jl_arg_split_spec(jl_tparam0(t1), morespec, 0);
+        JL_GC_PUSH1(&p);
+        assert(p != jl_tparam0(t1));
+        t1 = (jl_value_t*)jl_wrap_Type(p);
+        JL_GC_POP();
+        return t1;
+    }
+    return t1;
 }
 
 
@@ -963,7 +1033,8 @@ static unsigned jl_typemap_list_count(jl_typemap_entry_t *ml)
     return count;
 }
 
-static void jl_typemap_level_insert_(jl_typemap_level_t *cache, jl_typemap_entry_t *newrec, int8_t offs, const struct jl_typemap_info *tparams);
+static void jl_typemap_level_insert_(jl_typemap_level_t *cache, jl_typemap_entry_t *newrec, int8_t offs,
+        const struct jl_typemap_info *tparams);
 static void jl_typemap_list_insert_sorted(jl_typemap_entry_t **pml, jl_value_t *parent,
                                           jl_typemap_entry_t *newrec, const struct jl_typemap_info *tparams);
 
@@ -982,7 +1053,8 @@ static jl_typemap_level_t *jl_new_typemap_level(void)
     return cache;
 }
 
-static jl_typemap_level_t *jl_method_convert_list_to_cache(jl_typemap_entry_t *ml, jl_value_t *key, int8_t offs)
+static jl_typemap_level_t *jl_method_convert_list_to_cache(jl_typemap_entry_t *ml, jl_value_t *key, int8_t offs,
+        const struct jl_typemap_info *tparams)
 {
     jl_typemap_level_t *cache = jl_new_typemap_level();
     cache->key = key;
@@ -991,7 +1063,7 @@ static jl_typemap_level_t *jl_method_convert_list_to_cache(jl_typemap_entry_t *m
     while (ml != (void*)jl_nothing) {
         next = ml->next;
         ml->next = (jl_typemap_entry_t*)jl_nothing;
-        jl_typemap_level_insert_(cache, ml, offs, 0);
+        jl_typemap_level_insert_(cache, ml, offs, tparams);
         ml = next;
     }
     JL_GC_POP();
@@ -1024,7 +1096,7 @@ static void jl_typemap_insert_generic(union jl_typemap_t *pml, jl_value_t *paren
 
     unsigned count = jl_typemap_list_count(pml->leaf);
     if (count > MAX_METHLIST_COUNT) {
-        pml->node = jl_method_convert_list_to_cache(pml->leaf, key, offs);
+        pml->node = jl_method_convert_list_to_cache(pml->leaf, key, offs, tparams);
         jl_gc_wb(parent, pml->node);
         jl_typemap_level_insert_(pml->node, newrec, offs, tparams);
         return;
@@ -1091,9 +1163,34 @@ static void jl_typemap_level_insert_(jl_typemap_level_t *cache, jl_typemap_entry
         if (a0 && jl_typemap_array_insert_(&cache->name1, a0, newrec, (jl_value_t*)cache, 2, offs, tparams))
             return;
     }
-    if (!t1 || jl_args_morespecific_typename(t1)) {
-        jl_typemap_list_insert_(&cache->linear_leaf, (jl_value_t*)cache, newrec, tparams);
-        return;
+    int morespec = t1 ? jl_args_morespecific_typename(t1, 1) : 1;
+    if (morespec) {
+        if (morespec == 2) {
+            // need to split this union into components more-specific than TypeName, and those less-specific
+            jl_value_t *morespec_sig = NULL;
+            JL_GC_PUSH1(&morespec_sig);
+            morespec_sig = (jl_value_t*)jl_svec_copy(newrec->sig->parameters);
+            if (l <= offs) offs = l - 1; // bound Vararg to the length of the signature
+            jl_value_t *elem = jl_tparam(newrec->sig, offs);
+            jl_svecset(morespec_sig, offs, jl_arg_split_spec(elem, 1, 1));
+            morespec_sig = (jl_value_t*)jl_apply_tuple_type((jl_svec_t*)morespec_sig);
+
+            jl_typemap_entry_t *newrec2 = (jl_typemap_entry_t*)jl_gc_allocobj(sizeof(jl_typemap_entry_t));
+            jl_set_typeof(newrec2, jl_typemap_entry_type);
+            *newrec2 = *newrec; // copy newrec to newrec2
+            // TODO: mark newrec2 as a non-primary entry (ignored for lookup operations)
+            newrec2->sig = (jl_datatype_t*)morespec_sig;
+            morespec_sig = (jl_value_t*)newrec2;
+            jl_typemap_list_insert_(&cache->linear_leaf, (jl_value_t*)cache, newrec2, tparams);
+            JL_GC_POP();
+            // fall-through. newrec is unmodified since lessspec_sig <: newrec->sig,
+            //  and the user might try to look up the original sig directly
+            //  (either through invoke or exact extraction)
+        }
+        else {
+            jl_typemap_list_insert_(&cache->linear_leaf, (jl_value_t*)cache, newrec, tparams);
+            return;
+        }
     }
     jl_typemap_list_insert_(&cache->linear, (jl_value_t*)cache, newrec, tparams);
 }
