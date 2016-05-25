@@ -20,8 +20,7 @@ const TAGS = Any[
     Symbol, Tuple, Expr,  # dummy entries, intentionally shadowed by earlier ones
     LineNumberNode, Slot, LabelNode, GotoNode,
     QuoteNode, :reserved23 #=was TopNode=#, TypeVar, Core.Box, LambdaInfo,
-    Module, #=UndefRefTag=#Symbol, Task, String,
-    UTF16String, UTF32String, Float16,
+    Module, #=UndefRefTag=#Symbol, Task, String, Float16,
     SimpleVector, #=BackrefTag=#Symbol, Method, GlobalRef,
 
     (), Bool, Any, :Any, Bottom, :reserved21, :reserved22, Type,
