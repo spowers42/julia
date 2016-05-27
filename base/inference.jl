@@ -919,10 +919,29 @@ function abstract_apply(af::ANY, fargs, aargtypes::Vector{Any}, vtypes::VarTable
     return abstract_call(af, (), Any[type_typeof(af), Vararg{Any}], vtypes, sv)
 end
 
-function pure_eval_call(f::ANY, argtypes::ANY, atype, sv)
+function pure_eval_call(f::ANY, argtypes::ANY, atype, vtypes, sv)
     for a in drop(argtypes,1)
         if !(isa(a,Const) || (isType(a) && !has_typevars(a.parameters[1])))
             return false
+        end
+    end
+
+    if f === return_type
+        tt = argtypes[3]
+        if isType(tt)
+            af_argtype = tt.parameters[1]
+            if af_argtype <: Tuple
+                af = argtypes[2]
+                rt = abstract_call(isa(af,Const) ? af.val : af.parameters[1],
+                                   (), Any[argtypes[2], af_argtype.parameters...], vtypes, sv)
+                if isa(rt,Const)
+                    return Type{widenconst(rt)}
+                elseif isleaftype(rt) || isleaftype(af_argtype)
+                    return Type{rt}
+                else
+                    return Type{TypeVar(:R, rt)}
+                end
+            end
         end
     end
 
@@ -1004,7 +1023,7 @@ function abstract_call(f::ANY, fargs, argtypes::Vector{Any}, vtypes::VarTable, s
     end
 
     atype = argtypes_to_type(argtypes)
-    t = pure_eval_call(f, argtypes, atype, sv)
+    t = pure_eval_call(f, argtypes, atype, vtypes, sv)
     t !== false && return t
 
     if istopfunction(tm, f, :promote_type) || istopfunction(tm, f, :typejoin)
@@ -3377,6 +3396,17 @@ function reindex_labels!(linfo::LambdaInfo, sv::InferenceState)
     end
 end
 
+@eval function return_type(f::ANY, t::ANY)
+    $(Expr(:meta, :pure))
+    rt = Union{}
+    for m in _methods(f, t, -1)
+        _, ty, inferred = typeinf(m[3], m[1], m[2], false)
+        !inferred && return Any
+        rt = tmerge(rt, ty)
+        rt === Any && break
+    end
+    return rt
+end
 
 #### bootstrapping ####
 
