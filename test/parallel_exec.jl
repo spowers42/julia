@@ -796,6 +796,49 @@ end
 # Test asyncmap
 @test allunique(asyncmap(x->object_id(current_task()), 1:100))
 
+# CachingPool tests
+wp = CachingPool(workers())
+@test [1:100...] == pmap(wp, x->x, 1:100)
+
+# test variable broadcasting
+function test_bargs(mod, isconst)
+    for p in workers()
+        @test remotecall_fetch(m->m.wp_foo, p, mod) == 1
+        @test remotecall_fetch(m->m.wp_bar, p, mod) == "foobar"
+        @test remotecall_fetch(m->m.wp_baz, p, mod) == ones(10^2)
+    end
+
+    if !isconst
+        clear!(wp)
+        yield()
+
+        for p in workers()
+            @test remotecall_fetch(m->m.wp_foo, p, mod) == nothing
+            @test remotecall_fetch(m->m.wp_bar, p, mod) == nothing
+            @test remotecall_fetch(m->m.wp_baz, p, mod) == nothing
+        end
+    end
+end
+
+wp = CachingPool(workers())
+mod = remoteset!(wp; wp_foo=1, wp_bar="foobar", wp_baz=ones(10^2))
+test_bargs(mod, true)
+
+wp = CachingPool(workers())
+mod = remoteset!(wp, false; wp_foo=1, wp_bar="foobar", wp_baz=ones(10^2))
+test_bargs(mod, false)
+
+mod = remoteset!(wp, true, :ModFoo ; wp_foo=1, wp_bar="foobar", wp_baz=ones(10^2))
+test_bargs(mod, true)
+
+module ModBar end
+wp = CachingPool(workers())
+mod = remoteset!(wp, false, ModBar; wp_foo=1, wp_bar="foobar", wp_baz=ones(10^2))
+test_bargs(mod, false)
+
+clear!(wp)
+@test length(wp.map_obj2ref) == 0
+
 
 # The below block of tests are usually run only on local development systems, since:
 # - tests which print errors

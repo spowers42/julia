@@ -247,6 +247,16 @@ General Parallel Computing Support
 
    Create a WorkerPool from a vector of worker ids.
 
+.. function:: CachingPool(workers::Vector{Int})
+
+   .. Docstring generated from Julia source
+
+   An implementation of an ``AbstractWorkerPool``\ . ``remote``\ , ``remotecall_fetch``\ , ``pmap`` and other remote calls which execute functions remotely benefit from caching the serialized/deserialized function on the worker nodes, especially when the same function or closure is called repeatedly. This is particularly true for closures which capture large amounts of data.
+
+   The remote cache is maintained for the lifetime of the returned ``CachingPool`` object. To clear the cache earlier, use ``clear!(pool)``\ .
+
+   Global variables are not captured by a closure. Use ``remoteset!`` on a ``CachingPool`` to broadcast global variables or global constants.
+
 .. function:: rmprocs(pids...)
 
    .. Docstring generated from Julia source
@@ -273,7 +283,7 @@ General Parallel Computing Support
 
    For multiple collection arguments, apply f elementwise.
 
-.. function:: pmap([::WorkerPool], f, c...; distributed=true, batch_size=1, on_error=nothing, retry_n=0, retry_max_delay=DEFAULT_RETRY_MAX_DELAY, retry_on=DEFAULT_RETRY_ON) -> collection
+.. function:: pmap([::AbstractWorkerPool], f, c...; distributed=true, batch_size=1, on_error=nothing, retry_n=0, retry_max_delay=DEFAULT_RETRY_MAX_DELAY, retry_on=DEFAULT_RETRY_ON) -> collection
 
    .. Docstring generated from Julia source
 
@@ -377,13 +387,13 @@ General Parallel Computing Support
 
    Perform ``fetch(remotecall(...))`` in one message.  Keyword arguments, if any, are passed through to ``func``\ . Any remote exceptions are captured in a ``RemoteException`` and thrown.
 
-.. function:: remotecall_fetch(f, pool::WorkerPool, args...; kwargs...)
+.. function:: remotecall_fetch(f, pool::AbstractWorkerPool, args...; kwargs...)
 
    .. Docstring generated from Julia source
 
    Call ``f(args...; kwargs...)`` on one of the workers in ``pool``\ . Waits for completion and returns the result.
 
-.. function:: remote([::WorkerPool], f) -> Function
+.. function:: remote([::AbstractWorkerPool], f) -> Function
 
    .. Docstring generated from Julia source
 
@@ -530,6 +540,28 @@ General Parallel Computing Support
 
        foo = 1
        @eval @everywhere bar=$foo
+
+.. function:: remoteset!(pool::CachingPool, isconst::Bool=true, mod=pool.default_bcast_mod; kwargs...) -> module
+
+   .. Docstring generated from Julia source
+
+   Provides a means of defining and setting variables on all workers in the pool. Variables to be defined are passed as keyword args with the name as the arg name and value as the arg value.
+
+   This function should only be used to broadcast variables that will last the entire duration of a program, since global variables cannot be unbound once declared.
+
+   ``mod`` specifies the module under which the variables are defined. If unspecified, variables are created in a new submodule with a random name formed by concatenating "Mod_" and the result of ``randstring()``
+
+   ``isconst`` specifies if the variables have to be declared as ``const``\ . Default is ``true``\ .
+
+   Declared variables are set to ``nothing`` when ``pool`` is garbage collected. Variables declared as ``const`` are not cleared.
+
+   Returns the module under which the variables are defined.
+
+.. function:: clear!(pool::CachingPool) -> pool
+
+   .. Docstring generated from Julia source
+
+   Removes all cached functions from all workers. Also sets all global variables defined via ``remoteset!`` to ``nothing``\ . Global constants are not cleared.
 
 .. function:: Base.remoteref_id(r::AbstractRemoteRef) -> (whence, id)
 
