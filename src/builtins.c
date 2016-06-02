@@ -202,6 +202,9 @@ JL_DLLEXPORT void jl_enter_handler(jl_handler_t *eh)
     eh->locks_len = jl_current_task->locks.len;
 #endif
     eh->defer_signal = jl_get_ptls_states()->defer_signal;
+#ifdef ENABLE_TIMINGS
+    eh->timing_stack = jl_current_task->timing_stack;
+#endif
     jl_current_task->eh = eh;
 }
 

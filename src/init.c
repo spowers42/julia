@@ -310,6 +310,12 @@ JL_DLLEXPORT void jl_atexit_hook(int exitcode)
     // force libuv to spin until everything has finished closing
     loop->stop_flag = 0;
     while (uv_run(loop,UV_RUN_DEFAULT)) {}
+
+#ifdef ENABLE_TIMINGS
+    if (jl_root_task)
+        delete jl_root_task->timing_stack;
+    jl_print_timings();
+#endif
 }
 
 void jl_get_builtin_hooks(void);
@@ -535,6 +541,9 @@ static void jl_set_io_wait(int v)
 
 void _julia_init(JL_IMAGE_SEARCH rel)
 {
+#ifdef ENABLE_TIMINGS
+    jl_root_timing = new jl_timing_block_t();
+#endif
 #ifdef JULIA_ENABLE_THREADING
     // Make sure we finalize the tls callback before starting any threads.
     jl_get_ptls_states_getter();
@@ -620,6 +629,10 @@ void _julia_init(JL_IMAGE_SEARCH rel)
     jl_init_types();
     jl_init_tasks();
     jl_init_root_task(jl_stack_lo, jl_stack_hi-jl_stack_lo);
+
+#ifdef ENABLE_TIMINGS
+    jl_root_task->timing_stack = jl_root_timing;
+#endif
 
     init_stdio();
     // libuv stdio cleanup depends on jl_init_tasks() because JL_TRY is used in jl_atexit_hook()

@@ -988,6 +988,7 @@ static void jl_finalize_module(std::unique_ptr<Module> uniquem, bool shadow)
 extern void jl_callback_triggered_linfos(void);
 static uint64_t getAddressForFunction(llvm::Function *llvmf)
 {
+    JL_TIMING(LLVM_EMIT);
 #ifdef JL_DEBUG_BUILD
     llvm::raw_fd_ostream out(1,false);
 #endif
@@ -1037,6 +1038,7 @@ extern "C" void jl_generate_fptr(jl_lambda_info_t *li)
 // or generate object code for it
 extern "C" void jl_compile_linfo(jl_lambda_info_t *li)
 {
+    JL_TIMING(CODEGEN);
     if (li->functionObjectsDecls.functionObject == NULL) {
         // objective: assign li->functionObject
         to_function(li);

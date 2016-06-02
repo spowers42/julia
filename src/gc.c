@@ -404,7 +404,7 @@ static inline int gc_setmark(jl_value_t *v, int sz, int mark_mode)
 #define gc_typeof(v) jl_typeof(v)
 #define gc_val_buf(o) ((buff_t*)(((void**)(o))-1))
 
-inline void gc_setmark_buf(void *o, int mark_mode)
+void gc_setmark_buf(void *o, int mark_mode)
 {
     buff_t *buf = gc_val_buf(o);
 #ifdef MEMDEBUG
@@ -1602,6 +1602,7 @@ static int sweep_mask = GC_MARKED;
 // Only one thread should be running in this function
 static void _jl_gc_collect(int full, char *stack_hi)
 {
+    JL_TIMING(GC);
     uint64_t t0 = jl_hrtime();
     int recollect = 0;
 #if defined(GC_TIME)

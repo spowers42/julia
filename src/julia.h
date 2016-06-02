@@ -7,6 +7,7 @@
 // if this is not defined, only individual dimension sizes are
 // stored and not total length, to save space.
 #define STORE_ARRAY_LEN
+#define ENABLE_TIMINGS
 //** End Configuration options **//
 
 #include "libsupport.h"
@@ -1418,6 +1419,7 @@ JL_DLLEXPORT void jl_sigatomic_end(void);
 
 // tasks and exceptions -------------------------------------------------------
 
+struct jl_timing_block_t;
 // info describing an exception handler
 typedef struct _jl_handler_t {
     jl_jmp_buf eh_ctx;
@@ -1428,6 +1430,9 @@ typedef struct _jl_handler_t {
     size_t locks_len;
 #endif
     sig_atomic_t defer_signal;
+#ifdef ENABLE_TIMINGS
+    jl_timing_block_t *timing_stack;
+#endif
 } jl_handler_t;
 
 typedef struct _jl_task_t {
@@ -1462,12 +1467,21 @@ typedef struct _jl_task_t {
     // This is statically initialized when the task is not holding any locks
     arraylist_t locks;
 #endif
+#ifdef ENABLE_TIMINGS
+    jl_timing_block_t *timing_stack;
+#endif
 } jl_task_t;
 
 #define jl_current_task (jl_get_ptls_states()->current_task)
 #define jl_root_task (jl_get_ptls_states()->root_task)
 #define jl_exception_in_transit (jl_get_ptls_states()->exception_in_transit)
 #define jl_task_arg_in_transit (jl_get_ptls_states()->task_arg_in_transit)
+
+#ifdef ENABLE_TIMINGS
+#include "timing.h"
+#else
+#define JL_TIMING(owner)
+#endif
 
 JL_DLLEXPORT jl_task_t *jl_new_task(jl_function_t *start, size_t ssize);
 JL_DLLEXPORT jl_value_t *jl_switchto(jl_task_t *t, jl_value_t *arg);
