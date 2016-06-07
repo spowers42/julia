@@ -548,8 +548,10 @@ jl_value_t *jl_toplevel_eval_in_warn(jl_module_t *m, jl_value_t *ex, int delay_w
         return jl_eval_global_var(m, (jl_sym_t*)ex);
     jl_value_t *v=NULL;
     int last_lineno = jl_lineno;
-    jl_module_t *last_m = jl_current_module;
-    jl_module_t *task_last_m = jl_current_task->current_module;
+    jl_tls_states_t *ptls = jl_get_ptls_states();
+    size_t last_age = ptls->world_age;
+    jl_module_t *last_m = ptls->current_module;
+    jl_module_t *task_last_m = ptls->current_task->current_module;
     if (!delay_warn && jl_options.incremental && jl_generating_output()) {
         if (m != last_m) {
             jl_printf(JL_STDERR, "WARNING: eval from module %s to %s:    \n",
@@ -567,20 +569,23 @@ jl_value_t *jl_toplevel_eval_in_warn(jl_module_t *m, jl_value_t *ex, int delay_w
         jl_error("eval cannot be used in a generated function");
     JL_TRY {
         jl_warn_on_eval = delay_warn && (jl_warn_on_eval || m != last_m); // compute whether a warning was suppressed
-        jl_current_task->current_module = jl_current_module = m;
+        ptls->current_task->current_module = ptls->current_module = m;
+        ptls->world_age = jl_world_counter;
         v = jl_toplevel_eval(ex);
     }
     JL_CATCH {
+        ptls->world_age = last_age;
+        ptls->current_module = last_m;
+        ptls->current_task->current_module = task_last_m;
         jl_warn_on_eval = last_delay_warn;
         jl_lineno = last_lineno;
-        jl_current_module = last_m;
-        jl_current_task->current_module = task_last_m;
         jl_rethrow();
     }
+    ptls->world_age = last_age;
+    ptls->current_module = last_m;
+    ptls->current_task->current_module = task_last_m;
     jl_warn_on_eval = last_delay_warn;
     jl_lineno = last_lineno;
-    jl_current_module = last_m;
-    jl_current_task->current_module = task_last_m;
     assert(v);
     return v;
 }

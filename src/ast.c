@@ -670,6 +670,7 @@ jl_value_t *jl_parse_eval_all(const char *fname, size_t len,
 
     int last_lineno = jl_lineno;
     const char *last_filename = jl_filename;
+    size_t last_age = jl_get_ptls_states()->world_age;
     jl_lineno = 0;
     jl_filename = fname;
     jl_array_t *roots = NULL;
@@ -682,11 +683,13 @@ jl_value_t *jl_parse_eval_all(const char *fname, size_t len,
         assert(iscons(ast) && car_(ast) == symbol(fl_ctx,"toplevel"));
         ast = cdr_(ast);
         while (iscons(ast)) {
+            jl_get_ptls_states()->world_age = jl_world_counter;
             value_t expansion = fl_applyn(fl_ctx, 1, symbol_value(symbol(fl_ctx, "jl-expand-to-thunk")), car_(ast));
             form = scm_to_julia(fl_ctx, expansion, 0);
             jl_sym_t *head = NULL;
             if (jl_is_expr(form)) head = ((jl_expr_t*)form)->head;
             JL_SIGATOMIC_END();
+            jl_get_ptls_states()->world_age = jl_world_counter;
             if (head == jl_incomplete_sym)
                 jl_errorf("syntax: %s", jl_string_data(jl_exprarg(form,0)));
             else if (head == error_sym)
@@ -706,6 +709,7 @@ jl_value_t *jl_parse_eval_all(const char *fname, size_t len,
         result = jl_box_long(jl_lineno);
         err = 1;
     }
+    jl_get_ptls_states()->world_age = last_age;
     jl_lineno = last_lineno;
     jl_filename = last_filename;
     fl_free_gc_handles(fl_ctx, 1);

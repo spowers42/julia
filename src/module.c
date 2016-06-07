@@ -585,15 +585,19 @@ jl_function_t *jl_module_get_initializer(jl_module_t *m)
     return (jl_function_t*)f;
 }
 
-JL_DLLEXPORT void jl_module_run_initializer(jl_module_t *m)
+void jl_module_run_initializer(jl_module_t *m)
 {
     jl_function_t *f = jl_module_get_initializer(m);
     if (f == NULL)
         return;
+    size_t last_age = jl_get_ptls_states()->world_age;
     JL_TRY {
+        jl_get_ptls_states()->world_age = jl_world_counter;
         jl_apply(&f, 1);
+        jl_get_ptls_states()->world_age = last_age;
     }
     JL_CATCH {
+        jl_get_ptls_states()->world_age = last_age;
         if (jl_initerror_type == NULL) {
             jl_rethrow();
         }

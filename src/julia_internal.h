@@ -23,6 +23,7 @@ extern "C" {
 
 // useful constants
 extern jl_methtable_t *jl_type_type_mt;
+extern size_t jl_world_counter;
 
 // execution of certain certain unpure
 // statements is prohibited from certain
@@ -316,6 +317,7 @@ jl_lambda_info_t *jl_get_specialization1(jl_tupletype_t *types);
 int jl_has_call_ambiguities(jl_tupletype_t *types, jl_method_t *m);
 
 jl_function_t *jl_module_get_initializer(jl_module_t *m);
+void jl_module_run_initializer(jl_module_t *m);
 uint32_t jl_module_next_counter(jl_module_t *m);
 void jl_fptr_to_llvm(jl_fptr_t fptr, jl_lambda_info_t *lam, int specsig);
 jl_tupletype_t *arg_type_tuple(jl_value_t **args, size_t nargs);
@@ -600,6 +602,7 @@ jl_typemap_entry_t *jl_typemap_insert(union jl_typemap_t *cache, jl_value_t *par
                                       jl_tupletype_t *simpletype, jl_svec_t *guardsigs,
                                       jl_value_t *newvalue, int8_t offs,
                                       const struct jl_typemap_info *tparams,
+                                      size_t min_world, size_t max_world,
                                       jl_value_t **overwritten);
 
 jl_typemap_entry_t *jl_typemap_assoc_by_type(union jl_typemap_t ml_or_cache, jl_tupletype_t *types, jl_svec_t **penv,

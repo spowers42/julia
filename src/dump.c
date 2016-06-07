@@ -1877,7 +1877,7 @@ void jl_init_restored_modules(jl_array_t *init_order)
     if (!init_order)
         return;
     int i;
-    for(i=0; i < jl_array_len(init_order); i++) {
+    for (i = 0; i < jl_array_len(init_order); i++) {
         jl_value_t *mod = jl_array_ptr_ref(init_order, i);
         jl_module_run_initializer((jl_module_t*)mod);
     }

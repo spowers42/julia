@@ -536,7 +536,9 @@ int sigs_eq(jl_value_t *a, jl_value_t *b, int useenv)
 static jl_typemap_entry_t *jl_typemap_assoc_by_type_(jl_typemap_entry_t *ml, jl_tupletype_t *types, int8_t inexact, jl_svec_t **penv)
 {
     size_t n = jl_datatype_nfields(types);
-    while (ml != (void*)jl_nothing) {
+    for (; ml != (void*)jl_nothing; ml = ml->next) {
+        if (ml->max_world != ~(size_t)0)
+            continue; // ignore replaced methods
         size_t lensig = jl_datatype_nfields(ml->sig);
         if (lensig == n || (ml->va && lensig <= n+1)) {
             int resetenv = 0, ismatch = 1;
@@ -617,7 +619,6 @@ static jl_typemap_entry_t *jl_typemap_assoc_by_type_(jl_typemap_entry_t *ml, jl_
             if (resetenv)
                 *penv = jl_emptysvec;
         }
-        ml = ml->next;
     }
     return NULL;
 }
@@ -712,7 +713,7 @@ jl_typemap_entry_t *jl_typemap_entry_assoc_exact(jl_typemap_entry_t *ml, jl_valu
     // some manually-unrolled common special cases
     while (ml->simplesig == (void*)jl_nothing && ml->guardsigs == jl_emptysvec && ml->isleafsig) {
         // use a tight loop for a long as possible
-        if (n == jl_datatype_nfields(ml->sig) && jl_typeof(args[0]) == jl_tparam(ml->sig, 0)) {
+        if (ml->max_world == ~(size_t)0 && n == jl_datatype_nfields(ml->sig) && jl_typeof(args[0]) == jl_tparam(ml->sig, 0)) {
             if (n == 1)
                 return ml;
             if (n == 2) {
@@ -735,6 +736,8 @@ jl_typemap_entry_t *jl_typemap_entry_assoc_exact(jl_typemap_entry_t *ml, jl_valu
     }
 
     while (ml != (void*)jl_nothing) {
+        if (ml->max_world != ~(size_t)0)
+            goto nomatch; // ignore replaced methods
         size_t lensig = jl_datatype_nfields(ml->sig);
         if (lensig == n || (ml->va && lensig <= n+1)) {
             if (ml->simplesig != (void*)jl_nothing) {
@@ -940,8 +943,10 @@ jl_typemap_entry_t *jl_typemap_insert(union jl_typemap_t *cache, jl_value_t *par
                                       jl_tupletype_t *simpletype, jl_svec_t *guardsigs,
                                       jl_value_t *newvalue, int8_t offs,
                                       const struct jl_typemap_info *tparams,
+                                      size_t min_world, size_t max_world,
                                       jl_value_t **overwritten)
 {
+    assert(min_world > 0 && max_world > 0);
     assert(jl_is_tuple_type(type));
     if (!simpletype) {
         simpletype = (jl_tupletype_t*)jl_nothing;
@@ -950,28 +955,15 @@ jl_typemap_entry_t *jl_typemap_insert(union jl_typemap_t *cache, jl_value_t *par
     if ((jl_value_t*)simpletype == jl_nothing) {
         jl_typemap_entry_t *ml = jl_typemap_assoc_by_type(*cache, type, NULL, 1, 0, offs);
         if (ml && ml->simplesig == (void*)jl_nothing) {
+            if (newvalue == ml->func.value) // no change
+                return ml;
             if (overwritten != NULL)
                 *overwritten = ml->func.value;
             if (newvalue == NULL)  // don't overwrite with guard entries
                 return ml;
-            // sigatomic begin
-            ml->sig = type;
-            jl_gc_wb(ml, ml->sig);
-            ml->simplesig = simpletype;
-            jl_gc_wb(ml, ml->simplesig);
-            ml->tvars = tvars;
-            jl_gc_wb(ml, ml->tvars);
-            ml->va = jl_is_va_tuple(type);
-            // TODO: `l->func` or `l->func->roots` might need to be rooted
-            ml->func.value = newvalue;
-            if (newvalue)
-                jl_gc_wb(ml, newvalue);
-            // sigatomic end
-            return ml;
+            ml->max_world = min_world - 1;
         }
     }
-    if (overwritten != NULL)
-        *overwritten = NULL;
 
     jl_typemap_entry_t *newrec = (jl_typemap_entry_t*)jl_gc_allocobj(sizeof(jl_typemap_entry_t));
     jl_set_typeof(newrec, jl_typemap_entry_type);
@@ -981,6 +973,8 @@ jl_typemap_entry_t *jl_typemap_insert(union jl_typemap_t *cache, jl_value_t *par
     newrec->func.value = newvalue;
     newrec->guardsigs = guardsigs;
     newrec->next = (jl_typemap_entry_t*)jl_nothing;
+    newrec->min_world = min_world;
+    newrec->max_world = max_world;
     // compute the complexity of this type signature
     newrec->va = jl_is_va_tuple(type);
     newrec->issimplesig = (tvars == jl_emptysvec); // a TypeVar environment needs an complex matching test

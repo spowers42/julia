@@ -399,6 +399,8 @@ typedef struct _jl_typemap_entry_t {
     jl_svec_t *tvars; // the bound type variables for sig
     jl_tupletype_t *simplesig; // a simple signature for fast rejection
     jl_svec_t *guardsigs;
+    size_t min_world;
+    size_t max_world;
     union {
         jl_value_t *value;
         jl_lambda_info_t *linfo; // [nullable] for guard entries
@@ -1212,7 +1214,6 @@ STATIC_INLINE jl_function_t *jl_get_function(jl_module_t *m, const char *name)
 {
     return (jl_function_t*)jl_get_global(m, jl_symbol(name));
 }
-JL_DLLEXPORT void jl_module_run_initializer(jl_module_t *m);
 int jl_is_submodule(jl_module_t *child, jl_module_t *parent);
 
 // eq hash tables
@@ -1435,6 +1436,7 @@ typedef struct _jl_task_t {
     size_t bufsz;
     void *stkbuf;
 
+// hidden fields:
     size_t ssize;
     size_t started:1;
 
@@ -1444,6 +1446,8 @@ typedef struct _jl_task_t {
     jl_gcframe_t *gcstack;
     // current module, or NULL if this task has not set one
     jl_module_t *current_module;
+    // current world age
+    size_t world_age;
 
     // id of owning thread
     // does not need to be defined until the task runs

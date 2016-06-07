@@ -24,6 +24,8 @@
 extern "C" {
 #endif
 
+size_t jl_world_counter = 0;
+
 JL_DLLEXPORT jl_value_t *jl_invoke(jl_lambda_info_t *meth, jl_value_t **args, uint32_t nargs)
 {
     return jl_call_method_internal(meth, args, nargs);
@@ -127,7 +129,7 @@ JL_DLLEXPORT jl_lambda_info_t *jl_specializations_get_linfo(jl_method_t *m, jl_t
     jl_lambda_info_t *li = jl_get_specialized(m, type, sparams);
     JL_GC_PUSH1(&li);
     // TODO: fuse lookup and insert steps
-    jl_typemap_insert(&m->specializations, (jl_value_t*)m, type, jl_emptysvec, NULL, jl_emptysvec, (jl_value_t*)li, 0, &tfunc_cache, NULL);
+    jl_typemap_insert(&m->specializations, (jl_value_t*)m, type, jl_emptysvec, NULL, jl_emptysvec, (jl_value_t*)li, 0, &tfunc_cache, 1, ~(size_t)0, NULL);
     JL_GC_POP();
     return li;
 }
@@ -165,7 +167,7 @@ jl_value_t *jl_mk_builtin_func(const char *name, jl_fptr_t fptr)
     li->def->lambda_template = li;
     li->def->ambig = jl_nothing;
     jl_methtable_t *mt = jl_gf_mtable(f);
-    jl_typemap_insert(&mt->cache, (jl_value_t*)mt, jl_anytuple_type, jl_emptysvec, NULL, jl_emptysvec, (jl_value_t*)li, 0, &lambda_cache, NULL);
+    jl_typemap_insert(&mt->cache, (jl_value_t*)mt, jl_anytuple_type, jl_emptysvec, NULL, jl_emptysvec, (jl_value_t*)li, 0, &lambda_cache, 1, ~(size_t)0, NULL);
     return f;
 }
 
@@ -630,7 +632,7 @@ static jl_lambda_info_t *cache_method(jl_methtable_t *mt, union jl_typemap_t *ca
                     jl_svecset(guardsigs, guards, (jl_tupletype_t*)jl_svecref(m, 0));
                     guards++;
                     //jl_typemap_insert(cache, parent, (jl_tupletype_t*)jl_svecref(m, 0),
-                    //        jl_emptysvec, NULL, jl_emptysvec, /*guard*/NULL, jl_cachearg_offset(mt), &lambda_cache, NULL);
+                    //        jl_emptysvec, NULL, jl_emptysvec, /*guard*/NULL, jl_cachearg_offset(mt), &lambda_cache, 1, ~(size_t)0, NULL);
                 }
             }
         }
@@ -675,8 +677,7 @@ static jl_lambda_info_t *cache_method(jl_methtable_t *mt, union jl_typemap_t *ca
         }
     }
 
-    jl_typemap_insert(cache, parent, origtype, jl_emptysvec, type, guardsigs, (jl_value_t*)newmeth, jl_cachearg_offset(mt), &lambda_cache, NULL);
-
+    jl_typemap_insert(cache, parent, origtype, jl_emptysvec, type, guardsigs, (jl_value_t*)newmeth, jl_cachearg_offset(mt), &lambda_cache, 1, ~(size_t)0, NULL);
     JL_UNLOCK(&codegen_lock); // Might GC
     if (definition->traced && jl_method_tracer)
         jl_call_tracer(jl_method_tracer, (jl_value_t*)newmeth);
@@ -859,57 +860,6 @@ static void method_overwrite(jl_typemap_entry_t *newentry, jl_method_t *oldvalue
     jl_printf(s, ".\n");
 }
 
-// invalidate cached methods that overlap this definition
-static void invalidate_conflicting(union jl_typemap_t *pml, jl_value_t *type, jl_value_t *parent, jl_array_t *shadowed)
-{
-    jl_typemap_entry_t **pl;
-    if (jl_typeof(pml->unknown) == (jl_value_t*)jl_typemap_level_type) {
-        jl_typemap_level_t *cache = pml->node;
-        if (cache->arg1 != (void*)jl_nothing) {
-            for(int i=0; i < jl_array_len(cache->arg1); i++) {
-                union jl_typemap_t *pl = &((union jl_typemap_t*)jl_array_data(cache->arg1))[i];
-                if (pl->unknown && pl->unknown != jl_nothing) {
-                    invalidate_conflicting(pl, type, (jl_value_t*)cache->arg1, shadowed);
-                }
-            }
-        }
-        if (cache->targ != (void*)jl_nothing) {
-            for(int i=0; i < jl_array_len(cache->targ); i++) {
-                union jl_typemap_t *pl = &((union jl_typemap_t*)jl_array_data(cache->targ))[i];
-                if (pl->unknown && pl->unknown != jl_nothing) {
-                    invalidate_conflicting(pl, type, (jl_value_t*)cache->targ, shadowed);
-                }
-            }
-        }
-        pl = &cache->linear;
-        parent = (jl_value_t*)cache;
-    }
-    else {
-        pl = &pml->leaf;
-    }
-    jl_typemap_entry_t *l = *pl;
-    size_t i, n = jl_array_len(shadowed);
-    jl_value_t **d = jl_array_ptr_data(shadowed);
-    while (l != (void*)jl_nothing) {
-        int replaced = 0;
-        for (i = 0; i < n; i++) {
-            if (d[i] == (jl_value_t*)l->func.linfo->def) {
-                replaced = jl_type_intersection(type, (jl_value_t*)l->sig) != (jl_value_t*)jl_bottom_type;
-                break;
-            }
-        }
-        if (replaced) {
-            *pl = l->next;
-            jl_gc_wb(parent, *pl);
-        }
-        else {
-            pl = &l->next;
-            parent = (jl_value_t*)l;
-        }
-        l = l->next;
-    }
-}
-
 static void update_max_args(jl_methtable_t *mt, jl_tupletype_t *type)
 {
     size_t na = jl_nparams(type);
@@ -917,6 +867,26 @@ static void update_max_args(jl_methtable_t *mt, jl_tupletype_t *type)
         na--;
     if (na > mt->max_args)
         mt->max_args = na;
+}
+
+// invalidate cached methods that overlap this definition
+struct invalidate_conflicting_env {
+    struct typemap_intersection_env match;
+    jl_array_t *shadowed;
+    size_t max_world;
+};
+static int invalidate_conflicting(jl_typemap_entry_t *oldentry, struct typemap_intersection_env *closure0)
+{
+    struct invalidate_conflicting_env *closure = container_of(closure0, struct invalidate_conflicting_env, match);
+    size_t i, n = jl_array_len(closure->shadowed);
+    jl_value_t **d = jl_array_ptr_data(closure->shadowed);
+    for (i = 0; i < n; i++) {
+        if (d[i] == (jl_value_t*)oldentry->func.linfo->def) {
+            oldentry->max_world = closure->max_world;
+            return 1;
+        }
+    }
+    return 1;
 }
 
 void jl_method_table_insert(jl_methtable_t *mt, jl_method_t *method, jl_tupletype_t *simpletype)
@@ -928,21 +898,39 @@ void jl_method_table_insert(jl_methtable_t *mt, jl_method_t *method, jl_tupletyp
     assert(jl_is_tuple_type(type));
     JL_SIGATOMIC_BEGIN();
     jl_value_t *oldvalue = NULL;
-    JL_GC_PUSH1(&oldvalue);
+    struct invalidate_conflicting_env env;
+    env.match.ti = NULL;
+    env.match.env = jl_emptysvec;
+    JL_GC_PUSH3(&oldvalue, &env.match.env, &env.match.ti);
     jl_typemap_entry_t *newentry = jl_typemap_insert(&mt->defs, (jl_value_t*)mt,
-            type, tvars, simpletype, jl_emptysvec, (jl_value_t*)method, 0, &method_defs, &oldvalue);
+            type, tvars, simpletype, jl_emptysvec, (jl_value_t*)method, 0, &method_defs,
+            ++jl_world_counter, ~(size_t)0, &oldvalue);
     if (oldvalue) {
         method->ambig = ((jl_method_t*)oldvalue)->ambig;
         method_overwrite(newentry, (jl_method_t*)oldvalue);
-        jl_array_t *shadowed = jl_alloc_vec_any(1);
-        jl_array_ptr_set(shadowed, 0, oldvalue);
-        oldvalue = (jl_value_t*)shadowed;
+        env.shadowed = jl_alloc_vec_any(1);
+        jl_array_ptr_set(env.shadowed, 0, oldvalue);
     }
     else {
-        oldvalue = (jl_value_t*)check_ambiguous_matches(mt->defs, newentry);
+        env.shadowed = check_ambiguous_matches(mt->defs, newentry);
     }
-    if (oldvalue)
-        invalidate_conflicting(&mt->cache, (jl_value_t*)type, (jl_value_t*)mt, (jl_array_t*)oldvalue);
+    if (env.shadowed) {
+        oldvalue = (jl_value_t*)env.shadowed; // use as gc root
+        size_t l = jl_svec_len(type->parameters);
+        jl_value_t *va = NULL;
+        if (l > 0) {
+            va = jl_tparam(type, l - 1);
+            if (jl_is_vararg_type(va))
+                va = jl_tparam0(va);
+            else
+                va = NULL;
+        }
+        env.match.fptr = invalidate_conflicting;
+        env.match.va = va;
+        env.match.type = (jl_value_t*)type;
+        env.max_world = jl_world_counter - 1;
+        jl_typemap_intersection_visitor(mt->cache, 0, &env.match);
+    }
     JL_GC_POP();
     update_max_args(mt, type);
     JL_SIGATOMIC_END();
@@ -1964,6 +1952,8 @@ static int ml_matches_visitor(jl_typemap_entry_t *ml, struct typemap_intersectio
 {
     struct ml_matches_env *closure = container_of(closure0, struct ml_matches_env, match);
     int i;
+    if (ml->max_world != ~(size_t)0)
+        return 1; // ignore replaced methods
     // a method is shadowed if type <: S <: m->sig where S is the
     // signature of another applicable method
     /*
