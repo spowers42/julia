@@ -3629,7 +3629,7 @@ void jl_init_types(void)
     jl_lambda_info_type =
         jl_new_datatype(jl_symbol("LambdaInfo"),
                         jl_any_type, jl_emptysvec,
-                        jl_svec(25,
+                        jl_svec(26,
                                 jl_symbol("rettype"),
                                 jl_symbol("sparam_syms"),
                                 jl_symbol("sparam_vals"),
@@ -3641,6 +3641,7 @@ void jl_init_types(void)
                                 jl_symbol("slotflags"),
                                 jl_symbol("unspecialized_ducttape"),
                                 jl_symbol("def"),
+                                jl_symbol("constval"),
                                 jl_symbol("nargs"),
                                 jl_symbol("isva"),
                                 jl_symbol("inferred"),
@@ -3653,7 +3654,7 @@ void jl_init_types(void)
                                 jl_symbol("fptr"),
                                 jl_symbol(""), jl_symbol(""),
                                 jl_symbol(""), jl_symbol("")),
-                        jl_svec(25,
+                        jl_svec(26,
                                 jl_any_type,
                                 jl_simplevector_type,
                                 jl_simplevector_type,
@@ -3665,6 +3666,7 @@ void jl_init_types(void)
                                 jl_array_uint8_type,
                                 jl_any_type,
                                 jl_method_type,
+                                jl_any_type,
                                 jl_int32_type,
                                 jl_bool_type,
                                 jl_bool_type,
@@ -3672,7 +3674,7 @@ void jl_init_types(void)
                                 jl_bool_type,
                                 jl_bool_type,
                                 jl_bool_type,
-                                jl_bool_type,
+                                jl_uint8_type,
                                 jl_bool_type,
                                 jl_any_type,
                                 jl_any_type, jl_any_type,
@@ -3728,9 +3730,9 @@ void jl_init_types(void)
     jl_svecset(jl_simplevector_type->types, 0, jl_long_type);
     jl_svecset(jl_typename_type->types, 6, jl_long_type);
     jl_svecset(jl_methtable_type->types, 3, jl_long_type);
-    jl_svecset(jl_lambda_info_type->types, 20, jl_voidpointer_type);
     jl_svecset(jl_lambda_info_type->types, 21, jl_voidpointer_type);
     jl_svecset(jl_lambda_info_type->types, 22, jl_voidpointer_type);
+    jl_svecset(jl_lambda_info_type->types, 23, jl_voidpointer_type);
 
     jl_compute_field_offsets(jl_datatype_type);
     jl_compute_field_offsets(jl_typename_type);
