@@ -1904,9 +1904,6 @@ function finish(me::InferenceState)
     end
     type_annotate!(me.linfo, me.stmt_types, me, me.nargs)
 
-    # make sure (meta pure) is stripped from full tree
-    ispure = popmeta!(me.linfo.code, :pure)[1]
-
     # run optimization passes on fulltree
     if me.optimize
         # This pass is required for the AST to be valid in codegen
@@ -1921,6 +1918,8 @@ function finish(me::InferenceState)
         end
         alloc_elim_pass!(me.linfo, me)
         getfield_elim_pass!(me.linfo, me)
+        # remove placeholders
+        filter!(x->x!==nothing, me.linfo.code)
         reindex_labels!(me.linfo, me)
     end
     widen_all_consts!(me.linfo)
@@ -1929,11 +1928,12 @@ function finish(me::InferenceState)
     me.inferred = true
 
     # determine and cache inlineability
-    me.linfo.inlineable = isinlineable(me.linfo)
+    if !me.linfo.inlineable
+        me.linfo.inlineable = isinlineable(me.linfo)
+    end
 
     me.linfo.inferred = true
     me.linfo.inInference = false
-    me.linfo.pure = ispure
     if isdefined(me.linfo, :def)
         # compress code for non-toplevel thunks
         compressedtree = ccall(:jl_compress_ast, Any, (Any,Any), me.linfo, me.linfo.code)
@@ -2700,13 +2700,16 @@ function inlineable(f::ANY, ft::ANY, e::Expr, atypes::Vector{Any}, sv::Inference
         end
     end
 
-   if !isempty(stmts)
-       if all(stmt -> isa(stmt,Expr) && stmt.head === :line || isa(stmt, LineNumberNode), stmts)
-           empty!(stmts)
-       else
-           unshift!(stmts, Expr(:meta, :push_loc, linfo.def.file, linfo.def.name))
-           push!(stmts, Expr(:meta, :pop_loc))
-       end
+    if !isempty(stmts)
+        if all(stmt -> (isa(stmt,Expr) && stmt.head === :line) || isa(stmt, LineNumberNode) || stmt === nothing,
+               stmts)
+            empty!(stmts)
+        else
+            isa(stmts[1], LineNumberNode) && shift!(stmts)
+            unshift!(stmts, Expr(:meta, :push_loc, linfo.def.file, linfo.def.name, linfo.def.line))
+            isa(stmts[end], LineNumberNode) && pop!(stmts)
+            push!(stmts, Expr(:meta, :pop_loc))
+        end
     end
     if !isempty(stmts) && !propagate_inbounds
         # avoid redundant inbounds annotations
@@ -2743,16 +2746,14 @@ const inline_incompletematch_allowed = false
 inline_worthy(body::ANY, cost::Integer) = true
 
 # should the expression be part of the inline cost model
-function inline_ignore(ex)
+function inline_ignore(ex::ANY)
     isa(ex, LineNumberNode) ||
+    ex === nothing ||
     isa(ex, Expr) && ((ex::Expr).head === :line ||
                       (ex::Expr).head === :meta)
 end
 
 function inline_worthy(body::Expr, cost::Integer=1000) # precondition: 0 < cost; nominal cost = 1000
-    if popmeta!(body, :inline)[1]
-        return true
-    end
     if popmeta!(body, :noinline)[1]
         return false
     end
