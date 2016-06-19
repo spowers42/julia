@@ -362,6 +362,36 @@ function inv{T}(A::StridedMatrix{T})
     return convert(typeof(parent(Ai)), Ai)
 end
 
+"""
+    factorize(A)
+
+Compute a convenient factorization of `A`, based upon the type of the input matrix. `factorize` checks `A` to
+see if it is symmetric/triangular/etc. if `A` is passed as a generic matrix. The return value
+can then be reused for efficient solving of multiple systems. For example: `A=factorize(A); x=A\\b; y=A\\C`.
+
+| Properties of `A`       | type of factorization                          |
+|:------------------------|:-----------------------------------------------|
+| Positive-definite       | Cholesky (see [`cholfact`](:func:`cholfact`))  |
+| Symmetric/Hermitian     | Bunch-Kaufman (see [`bkfact`](:func:`bkfact`)) |
+| Triangular              | Triangular                                     |
+| Diagonal                | Diagonal                                       |
+| Bidiagonal              | Bidiagonal                                     |
+| Triidiagonal            | LU (see [`lufact`](:func:`lufact`))            |
+| (Hermitian) tridiagonal | LDLt (see [`ldltfact`](:func:`ldltfact`))      |
+| General square          | LU (see [`lufact`](:func:`lufact`))            |
+| General non-square      | QR (see [`qrfact`](:func:`qrfact`))            |
+
+If `factorize` is called on a Hermitian positive-definite matrix, for instance, then `factorize`
+will return a Cholesky factorization.
+
+Example:
+```julia
+A = diagm(rand(5)) + diagm(rand(4),1); #A is really bidiagonal
+factorize(A) #factorize will check to see that A is already factorized
+```
+This returns a `5×5 Bidiagonal{Float64}`, which can now be passed to other linear algebra functions
+(e.g. eigensolvers) which will use specialized methods for `Bidiagonal` types.
+"""
 function factorize{T}(A::StridedMatrix{T})
     m, n = size(A)
     if m == n
