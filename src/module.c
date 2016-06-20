@@ -597,7 +597,6 @@ void jl_module_run_initializer(jl_module_t *m)
         jl_get_ptls_states()->world_age = last_age;
     }
     JL_CATCH {
-        jl_get_ptls_states()->world_age = last_age;
         if (jl_initerror_type == NULL) {
             jl_rethrow();
         }

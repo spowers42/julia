@@ -547,7 +547,10 @@ static NOINLINE int true_main(int argc, char *argv[])
         (jl_function_t*)jl_get_global(jl_base_module, jl_symbol("_start")) : NULL;
 
     if (start_client) {
+        size_t last_age = jl_get_ptls_states()->world_age;
+        jl_get_ptls_states()->world_age = jl_get_world_counter();
         jl_apply(&start_client, 1);
+        jl_get_ptls_states()->world_age = last_age;
         return 0;
     }
 

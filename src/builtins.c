@@ -205,6 +205,7 @@ JL_DLLEXPORT void jl_enter_handler(jl_handler_t *eh)
 #endif
     eh->defer_signal = ptls->defer_signal;
     eh->finalizers_inhibited = ptls->finalizers_inhibited;
+    eh->world_age = ptls->world_age;
     current_task->eh = eh;
 }
 
@@ -574,7 +575,6 @@ jl_value_t *jl_toplevel_eval_in_warn(jl_module_t *m, jl_value_t *ex, int delay_w
         v = jl_toplevel_eval(ex);
     }
     JL_CATCH {
-        ptls->world_age = last_age;
         ptls->current_module = last_m;
         ptls->current_task->current_module = task_last_m;
         jl_warn_on_eval = last_delay_warn;
@@ -966,7 +966,8 @@ static void jl_check_type_tuple(jl_value_t *t, jl_sym_t *name, const char *ctx)
 JL_CALLABLE(jl_f_applicable)
 {
     JL_NARGSV(applicable, 1);
-    return jl_method_lookup(jl_gf_mtable(args[0]), args, nargs, 1) != NULL ?
+    size_t world = jl_get_ptls_states()->world_age;
+    return jl_method_lookup(jl_gf_mtable(args[0]), args, nargs, 1, world) != NULL ?
         jl_true : jl_false;
 }
 

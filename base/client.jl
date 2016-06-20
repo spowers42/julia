@@ -114,13 +114,14 @@ function eval_user_input(ast::ANY, show_value)
                 errcount, lasterr = 0, ()
             else
                 ast = expand(ast)
-                value = eval(Main,ast)
+                value = eval(Main, ast)
                 eval(Main, :(ans = $(Expr(:quote, value))))
-                if !is(value,nothing) && show_value
+                if !is(value, nothing) && show_value
                     if have_color
                         print(answer_color())
                     end
-                    try display(value)
+                    try
+                        eval(Main, Expr(:call, () -> display(value)))
                     catch err
                         println(STDERR, "Evaluation succeeded, but an error occurred while showing value of type ", typeof(value), ":")
                         rethrow(err)

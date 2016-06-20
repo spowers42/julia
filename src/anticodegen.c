@@ -15,7 +15,7 @@ int32_t jl_get_llvm_gv(jl_value_t *p) UNAVAILABLE
 void jl_write_malloc_log(void) UNAVAILABLE
 void jl_write_coverage_data(void) UNAVAILABLE
 void jl_generate_fptr(jl_lambda_info_t *li) UNAVAILABLE
-void jl_compile_linfo(jl_lambda_info_t *li, void *cyclectx) UNAVAILABLE
+void jl_compile_linfo(jl_lambda_info_t *li, size_t world) UNAVAILABLE
 
 JL_DLLEXPORT void jl_clear_malloc_data(void) UNAVAILABLE
 JL_DLLEXPORT void jl_extern_c(jl_function_t *f, jl_value_t *rt, jl_value_t *argt, char *name) UNAVAILABLE

@@ -1,5 +1,5 @@
 // This file is a part of Julia. License is MIT: http://julialang.org/license
-
+;
 #include "llvm-version.h"
 #include "platform.h"
 #include "options.h"
@@ -419,6 +419,7 @@ static Function *resetstkoflw_func;
 #endif
 static Function *diff_gc_total_bytes_func;
 static Function *jlarray_data_owner_func;
+static Function *jlgetworld_func;
 
 // placeholder functions
 static Function *gcroot_func;
@@ -557,6 +558,8 @@ typedef struct {
     std::map<int, Value*> *handlers;
     jl_module_t *module;
     jl_lambda_info_t *linfo;
+    jl_array_t *code;
+    size_t world;
     const char *name;
     StringRef file;
     Value *spvals_ptr;
@@ -572,6 +575,7 @@ typedef struct {
 
     CallInst *ptlsStates;
     Value *signalPage;
+    Value *world_age_field;
 
     llvm::DIBuilder *dbuilder;
     bool debug_enabled;
@@ -801,12 +805,12 @@ void jl_dump_compiles(void *s)
 
 // --- entry point ---
 //static int n_emit=0;
-static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, jl_llvm_functions_t *declarations);
+static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, size_t world, jl_llvm_functions_t *declarations);
 void jl_add_linfo_in_flight(StringRef name, jl_lambda_info_t *linfo, const DataLayout &DL);
 
 // this is the implementation component of jl_compile_linfo
 // which compiles li and adds the result to the jitlayers
-static void to_function(jl_lambda_info_t *li)
+static void to_function(jl_lambda_info_t *li, size_t world)
 {
     // setup global state
     JL_LOCK(&codegen_lock);
@@ -822,7 +826,7 @@ static void to_function(jl_lambda_info_t *li)
     Function *f = NULL, *specf = NULL;
     // actually do the work of emitting the function
     JL_TRY {
-        m = emit_function(li, &li->functionObjectsDecls);
+        m = emit_function(li, world, &li->functionObjectsDecls);
         f = (Function*)li->functionObjectsDecls.functionObject;
         specf = (Function*)li->functionObjectsDecls.specFunctionObject;
         //n_emit++;
@@ -1018,11 +1022,11 @@ extern "C" void jl_generate_fptr(jl_lambda_info_t *li)
 // this generates llvm code for the lambda info
 // (and adds it to the shadow module), but doesn't yet compile
 // or generate object code for it
-extern "C" void jl_compile_linfo(jl_lambda_info_t *li)
+extern "C" void jl_compile_linfo(jl_lambda_info_t *li, size_t world)
 {
     if (li->functionObjectsDecls.functionObject == NULL) {
         // objective: assign li->functionObject
-        to_function(li);
+        to_function(li, world);
     }
 }
 
@@ -1100,13 +1104,14 @@ void jl_extern_c(jl_function_t *f, jl_value_t *rt, jl_value_t *argt, char *name)
 extern "C" JL_DLLEXPORT
 void *jl_get_llvmf(jl_tupletype_t *tt, bool getwrapper, bool getdeclarations)
 {
+    size_t world = jl_world_counter;
     jl_lambda_info_t *linfo = NULL;
     JL_GC_PUSH2(&linfo, &tt);
     if (tt != NULL) {
-        linfo = jl_get_specialization1(tt);
+        linfo = jl_get_specialization1(tt, world);
         if (linfo == NULL) {
             linfo = jl_method_lookup_by_type(
-                ((jl_datatype_t*)jl_tparam0(tt))->name->mt, tt, 0, 0);
+                ((jl_datatype_t*)jl_tparam0(tt))->name->mt, tt, 0, 0, world);
             if (linfo == NULL || jl_has_call_ambiguities(tt, linfo->def)) {
                 JL_GC_POP();
                 return NULL;
@@ -1119,7 +1124,7 @@ void *jl_get_llvmf(jl_tupletype_t *tt, bool getwrapper, bool getdeclarations)
     }
     // make sure to compile this normally first,
     // since `emit_function` doesn't handle recursive compilation correctly
-    linfo = jl_compile_for_dispatch(linfo);
+    linfo = jl_compile_for_dispatch(linfo, world);
 
     if (!getdeclarations) {
         if (linfo->code == jl_nothing) {
@@ -1127,7 +1132,7 @@ void *jl_get_llvmf(jl_tupletype_t *tt, bool getwrapper, bool getdeclarations)
             // XXX: this only /partially/ corrupts linfo
             // (by confusing the compiler about the
             // validity of the code it already generated)
-            linfo = jl_type_infer(linfo, 0);
+            linfo = jl_type_infer(linfo, world, 0);
             if (linfo->code == jl_nothing || linfo->inInference) {
                 JL_GC_POP();
                 return NULL;
@@ -1136,7 +1141,7 @@ void *jl_get_llvmf(jl_tupletype_t *tt, bool getwrapper, bool getdeclarations)
         // emit this function into a new module
         Function *f, *specf;
         jl_llvm_functions_t declarations;
-        std::unique_ptr<Module> m = emit_function(linfo, &declarations);
+        std::unique_ptr<Module> m = emit_function(linfo, world, &declarations);
         finalize_gc_frame(m.get());
         PM->run(*m.get());
         f = (llvm::Function*)declarations.functionObject;
@@ -2697,10 +2702,10 @@ static jl_cgval_t emit_invoke(jl_expr_t *ex, jl_codectx_t *ctx)
         assert(!li->inCompile);
         if (li->code == jl_nothing && !li->inInference && li->inferred) {
             // XXX: it was inferred in the past, so it's almost valid to re-infer it now
-            jl_type_infer(li, 0);
+            jl_type_infer(li, ctx->world, 0);
         }
         if (!li->inInference && li->inferred && li->code != jl_nothing) {
-            jl_compile_linfo(li);
+            jl_compile_linfo(li, ctx->world);
         }
     }
     Value *theFptr = (Value*)li->functionObjectsDecls.functionObject;
@@ -3079,6 +3084,10 @@ static void emit_stmtpos(jl_value_t *expr, jl_codectx_t *ctx)
         if (head == line_sym || head == type_goto_sym || head == meta_sym)
             return;
         // fall-through
+    }
+    if (ctx->linfo->def == NULL) {
+        Value *world = builder.CreateCall(prepare_call(jlgetworld_func));
+        builder.CreateStore(world, ctx->world_age_field);
     }
     (void)emit_expr(expr, ctx);
 }
@@ -3506,17 +3515,17 @@ static Function *gen_cfun_wrapper(jl_function_t *ff, jl_value_t *jlrettype, jl_t
 
     const char *name = "cfunction";
     // try to look up this function for direct invoking
-    jl_lambda_info_t *lam = jl_get_specialization1((jl_tupletype_t*)sigt);
+    jl_lambda_info_t *lam = jl_get_specialization1((jl_tupletype_t*)sigt, jl_world_counter/*FIXME*/);
     jl_value_t *astrt = (jl_value_t*)jl_any_type;
     // infer it first, if necessary
     if (lam && lam->inInference)
         lam = NULL; // TODO: use emit_invoke framework to dispatch these
     if (lam && (lam->code == jl_nothing || !lam->inferred))
-        jl_type_infer(lam, 0);
+        jl_type_infer(lam, jl_world_counter, 0);
     if (lam && (lam->inInference || !lam->inferred))
         lam = NULL; // TODO: use emit_invoke framework to dispatch these
     if (lam != NULL) {
-        jl_compile_linfo(lam);
+        jl_compile_linfo(lam, jl_world_counter);
         name = jl_symbol_name(lam->def->name);
         astrt = lam->rettype;
         if (astrt != (jl_value_t*)jl_bottom_type &&
@@ -3555,6 +3564,8 @@ static Function *gen_cfun_wrapper(jl_function_t *ff, jl_value_t *jlrettype, jl_t
     jl_codectx_t ctx;
     ctx.f = cw;
     ctx.linfo = lam;
+    ctx.code = NULL;
+    ctx.world = jl_world_counter;
     ctx.sret = false;
     ctx.spvals_ptr = NULL;
     allocate_gc_frame(b0, &ctx);
@@ -3844,8 +3855,9 @@ static Function *jl_cfunction_object(jl_function_t *ff, jl_value_t *declrt, jl_t
     cfunc_sig = (jl_value_t*)jl_apply_tuple_type((jl_svec_t*)cfunc_sig);
 
     // check the cache
+    size_t world = 1;
     if (jl_cfunction_list.unknown != jl_nothing) {
-        jl_typemap_entry_t *sf = jl_typemap_assoc_by_type(jl_cfunction_list, (jl_tupletype_t*)cfunc_sig, NULL, 1, 0, /*offs*/0);
+        jl_typemap_entry_t *sf = jl_typemap_assoc_by_type(jl_cfunction_list, (jl_tupletype_t*)cfunc_sig, NULL, 1, 0, /*offs*/0, world);
         if (sf) {
             Function *f = (Function*)jl_unbox_voidpointer(sf->func.value);
             if (f) {
@@ -3905,6 +3917,8 @@ static Function *gen_jlcall_wrapper(jl_lambda_info_t *lam, Function *f, bool sre
     jl_codectx_t ctx;
     ctx.f = w;
     ctx.linfo = lam;
+    ctx.code = NULL;
+    ctx.world = 0;
     ctx.sret = false;
     ctx.spvals_ptr = NULL;
     allocate_gc_frame(b0, &ctx);
@@ -3956,7 +3970,7 @@ static Function *gen_jlcall_wrapper(jl_lambda_info_t *lam, Function *f, bool sre
 }
 
 // Compile to LLVM IR, using a specialized signature if applicable.
-static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, jl_llvm_functions_t *declarations)
+static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, size_t world, jl_llvm_functions_t *declarations)
 {
     assert(declarations && "Capturing declarations is always required");
 
@@ -3976,6 +3990,8 @@ static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, jl_llvm_func
     ctx.handlers = &handlers;
     ctx.module = lam->def ? lam->def->module : jl_current_module;
     ctx.linfo = lam;
+    ctx.code = code;
+    ctx.world = world;
     ctx.name = jl_symbol_name(lam->def ? lam->def->name : anonymous_sym);
     ctx.funcName = ctx.name;
     ctx.vaSlot = -1;
@@ -3983,6 +3999,7 @@ static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, jl_llvm_func
     ctx.inbounds.push_back(false);
     ctx.boundsCheck.push_back(false);
     ctx.spvals_ptr = NULL;
+    bool toplevel = lam->def == NULL;
 
     // step 2. process var-info lists to see what vars need boxing
     int n_ssavalues = jl_is_long(lam->ssavaluetypes) ? jl_unbox_long(lam->ssavaluetypes) : jl_array_len(lam->ssavaluetypes);
@@ -4419,6 +4436,14 @@ static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, jl_llvm_func
     // step 7. set up GC frame
     allocate_gc_frame(b0, &ctx);
 
+    Value *last_age = NULL;
+    if (toplevel) {
+        ctx.world_age_field = builder.CreateGEP(
+                builder.CreateBitCast(ctx.ptlsStates, T_psize),
+                ConstantInt::get(T_size, offsetof(jl_tls_states_t, world_age) / sizeof(size_t)));
+        last_age = tbaa_decorate(tbaa_gcframe, builder.CreateLoad(ctx.world_age_field));
+    }
+
     // step 8. allocate space for exception handler contexts
     for(i=0; i < stmtslen; i++) {
         jl_value_t *stmt = jl_array_ptr_ref(stmts,i);
@@ -4766,6 +4791,8 @@ static std::unique_ptr<Module> emit_function(jl_lambda_info_t *lam, jl_llvm_func
                 retval = NULL;
             if (do_malloc_log && lno != -1)
                 mallocVisitLine(filename, lno);
+            if (toplevel)
+                builder.CreateStore(last_age, ctx.world_age_field);
             if (type_is_ghost(retty) || ctx.sret)
                 builder.CreateRetVoid();
             else
@@ -5593,6 +5620,14 @@ static void init_julia_llvm_env(Module *m)
                      Function::ExternalLinkage,
                      "julia.jlcall_frame_decl", m);
     add_named_global(jlcall_frame_func, (void*)NULL, /*dllimport*/false);
+
+    jlgetworld_func =
+        Function::Create(FunctionType::get(T_size, ArrayRef<Type*>(), false),
+                         Function::ExternalLinkage,
+                         "jl_get_world_counter", m);
+    jlgetworld_func->addFnAttr(Attribute::ReadOnly);
+    add_named_global(jlgetworld_func, jl_get_world_counter);
+
 
     // set up optimization passes
 #ifdef LLVM37

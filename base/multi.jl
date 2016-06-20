@@ -610,7 +610,7 @@ function lookup_ref(pg, rrid, f)
     rv = get(pg.refs, rrid, false)
     if rv === false
         # first we've heard of this ref
-        rv = RemoteValue(f())
+        rv = RemoteValue(eval(Main, Expr(:call, f)))
         pg.refs[rrid] = rv
         push!(rv.clientset, rrid.whence)
     end
@@ -778,7 +778,7 @@ function run_work_thunk(thunk, print_error)
         result = RemoteException(ce)
         print_error && showerror(STDERR, ce)
     end
-    result
+    return result
 end
 function run_work_thunk(rv::RemoteValue, thunk)
     put!(rv, run_work_thunk(thunk, false))
